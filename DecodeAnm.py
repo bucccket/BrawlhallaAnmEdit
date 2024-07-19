@@ -73,9 +73,9 @@ class UTF8String:
 
 class AnmBone:
     def __init__(self, data: io.BytesIO):
-        self.__ParseClass(data)
+        self.__ParseFile(data)
 
-    def __ParseClass(self, data: io.BytesIO):
+    def __ParseFile(self, data: io.BytesIO):
         self.id = ByteReader.ReadUint16LE(data)
         self.opaque = ByteReader.ReadBoolean(data)
         self.matrix: list[list[int]] = []
@@ -115,9 +115,9 @@ class AnmBone:
 
 class AnmFrame:
     def __init__(self, data: io.BytesIO):
-        self.__ParseClass(data)
+        self.__ParseFile(data)
 
-    def __ParseClass(self, data: io.BytesIO):
+    def __ParseFile(self, data: io.BytesIO):
         self.id = ByteReader.ReadUint16LE(data)
         self.offset_a: tuple[int, int] | None = None
         if (ByteReader.ReadBoolean(data)):
@@ -149,9 +149,9 @@ class AnmFrame:
 
 class AnmAnimation:
     def __init__(self, data: io.BytesIO):
-        self.__ParseClass(data)
+        self.__ParseFile(data)
 
-    def __ParseClass(self, data: io.BytesIO):
+    def __ParseFile(self, data: io.BytesIO):
         self.name = UTF8String.FromBytesIO(data)
         self.frame_count = ByteReader.ReadUint32LE(data)
         self.loop_start = ByteReader.ReadUint32LE(data)
@@ -171,9 +171,9 @@ class AnmAnimation:
 
 class AnmClass:
     def __init__(self, data: io.BytesIO):
-        self.__ParseClass(data)
+        self.__ParseFile(data)
 
-    def __ParseClass(self, data: io.BytesIO) -> None:
+    def __ParseFile(self, data: io.BytesIO) -> None:
         self.index: UTF8String = UTF8String.FromBytesIO(data)
         self.filename: UTF8String = UTF8String.FromBytesIO(data)
         self.animationCount: int = ByteReader.ReadUint32LE(data)

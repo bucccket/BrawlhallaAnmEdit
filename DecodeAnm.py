@@ -272,7 +272,6 @@ class AnmAnimation:
             self.frames.append(AnmFrame(data))
 
     def WriteBytesIO(self, data: io.BytesIO) -> None:
-        print(f"\twriting {self.name.string}")
         self.name.WriteBytesIO(data)
         ByteWriter.WriteUint32LE(data, len(self.frames))
         ByteWriter.WriteUint32LE(data, self.loop_start)
@@ -347,7 +346,6 @@ class AnmFile:
 
     def WriteBytesIO(self, data: io.BytesIO) -> None:
         for anmName, anmClass in self.anm_classes.items():
-            print(f"writing {anmName}")
             ByteWriter.WriteBoolean(data, True)
             UTF8String.FromString(anmName).WriteBytesIO(data)
             anmClass.WriteBytesIO(data)

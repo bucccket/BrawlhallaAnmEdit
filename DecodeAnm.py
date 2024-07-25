@@ -313,19 +313,18 @@ class AnmClass:
 class AnmFile:
     def __init__(self, filename: str):
         try:
-            fd = open(filename, "rb")
+            with open(filename, "rb") as fd:
+                self.anm_classes: dict[str, AnmClass] = {}
+
+                inflated_size = fd.read(4)
+                zlibdata = fd.read()
+
+                data = io.BytesIO(zlib.decompress(zlibdata))
+
+                self.__ParseFile(data)
         except FileNotFoundError:
             print(f"File {filename} not found")
             return
-
-        self.anm_classes: dict[str, AnmClass] = {}
-
-        inflated_size = fd.read(4)
-        zlibdata = fd.read()
-
-        data = io.BytesIO(zlib.decompress(zlibdata))
-
-        self.__ParseFile(data)
 
     def __ParseFile(self, data: io.BytesIO) -> None:
         # open("dump.bin", "wb").write(data.getbuffer())
@@ -339,10 +338,9 @@ class AnmFile:
         self.WriteBytesIO(data)
         inflated_size = data.getbuffer().nbytes.to_bytes(4, byteorder="little")
         zlibdata = zlib.compress(data.getbuffer())
-        fd = open(filename, "wb")
-        fd.write(inflated_size)
-        fd.write(zlibdata)
-        fd.close()
+        with open(filename, "wb") as fd:
+            fd.write(inflated_size)
+            fd.write(zlibdata)
 
     def WriteBytesIO(self, data: io.BytesIO) -> None:
         for anmName, anmClass in self.anm_classes.items():

@@ -1,7 +1,8 @@
+from dataclasses import dataclass
 from enum import Enum
 import io
 import struct
-from typing import Any
+from typing import Any, Generator
 import zlib
 
 # TODO implement this in dataclasses
@@ -31,16 +32,15 @@ class ByteReader:
     def ReadBytes(data: io.BytesIO, length: int) -> bytes:
         return data.read(length)
 
-    # https://docs.python.org/3/library/struct.html#format-characters
     @staticmethod
     def ReadF32(data: io.BytesIO) -> float:
         byte = data.read(4)
-        return struct.unpack('f', byte)[0]
+        return struct.unpack("f", byte)[0]
 
     @staticmethod
     def ReadF64(data: io.BytesIO) -> float:
         byte = data.read(8)
-        return struct.unpack('d', byte)[0]
+        return struct.unpack("d", byte)[0]
 
 
 class ByteWriter:
@@ -66,14 +66,16 @@ class ByteWriter:
 
     @staticmethod
     def WriteF32(data: io.BytesIO, value: float) -> None:
-        data.write(struct.pack('f', value))
+        data.write(struct.pack("f", value))
 
     @staticmethod
     def WriteF64(data: io.BytesIO, value: float) -> None:
-        data.write(struct.pack('d', value))
+        data.write(struct.pack("d", value))
 
 
 class UTF8String:
+    length: int
+    string: str
 
     # ctor
     def __init__(self, length: int, string: str):
@@ -85,17 +87,17 @@ class UTF8String:
     def FromBytesIO(cls, data: io.BytesIO) -> Any:
         length = ByteReader.ReadUint16LE(data)
         res = data.read(length)
-        string = res.decode('utf-8')
+        string = res.decode("utf-8")
         return cls(length, string)
 
     @classmethod
     def FromString(cls, string: str) -> Any:
-        return cls(len(string.encode('utf-8')), string)
+        return cls(len(string.encode("utf-8")), string)
 
     # public
     def WriteBytesIO(self, data: io.BytesIO) -> None:
         data.write(self.length.to_bytes(2, byteorder="little"))
-        data.write(self.string.encode('utf-8'))
+        data.write(self.string.encode("utf-8"))
 
     # overrides
     def __str__(self) -> str:
@@ -108,7 +110,15 @@ class Matrix:
         MIRRORED = 1
         AFFINE = 2
 
-    def __init__(self, x: float, y: float, scale_x: float = 1, shear0: float = 0, shear1: float = 0, scale_y: float = 1):
+    def __init__(
+        self,
+        x: float,
+        y: float,
+        scale_x: float = 1,
+        shear0: float = 0,
+        shear1: float = 0,
+        scale_y: float = 1,
+    ):
         self.x: float = x
         self.y: float = y
         self.scale_x: float = scale_x
@@ -117,16 +127,18 @@ class Matrix:
         self.scale_y: float = scale_y
 
         if scale_x == scale_y == 1 and shear0 == shear1 == 0:
-            self.type: Matrix.MatrixType = Matrix.MatrixType.TRANSLATION
+            self.type: self.MatrixType = self.MatrixType.TRANSLATION
         elif scale_x == -scale_y and shear0 == shear1:
-            self.type: Matrix.MatrixType = Matrix.MatrixType.MIRRORED
+            self.type: self.MatrixType = self.MatrixType.MIRRORED
         else:
-            self.type: Matrix.MatrixType = Matrix.MatrixType.AFFINE
+            self.type: self.MatrixType = self.MatrixType.AFFINE
 
     def toMatrix(self) -> list[list[float]]:
-        return [[self.scale_x,  self.shear1, self.x],
-                [self.shear0,  self.scale_y, self.y],
-                [0,                       0,      1]]
+        return [
+            [self.scale_x, self.shear1, self.x],
+            [self.shear0, self.scale_y, self.y],
+            [0, 0, 1],
+        ]
 
     @classmethod
     def FromBytes(cls, data: io.BytesIO) -> Any:
@@ -156,8 +168,7 @@ class Matrix:
     def WriteBytesIO(self, data: io.BytesIO) -> None:
         ByteWriter.WriteBoolean(data, self.type != Matrix.MatrixType.AFFINE)
         if self.type != Matrix.MatrixType.AFFINE:
-            ByteWriter.WriteBoolean(
-                data, self.type == Matrix.MatrixType.TRANSLATION)
+            ByteWriter.WriteBoolean(data, self.type == Matrix.MatrixType.TRANSLATION)
             if self.type == Matrix.MatrixType.MIRRORED:
                 ByteWriter.WriteF32(data, self.scale_x)
                 ByteWriter.WriteF32(data, self.shear0)
@@ -170,18 +181,25 @@ class Matrix:
         ByteWriter.WriteF32(data, self.y)
 
 
+@dataclass
 class AnmBone:
-    def __init__(self, data: io.BytesIO):
-        self.__ParseFile(data)
+    id: int
+    matrix: Matrix
+    frame: int
+    opacity: float
 
-    def __ParseFile(self, data: io.BytesIO) -> None:
-        self.id: int = ByteReader.ReadUint16LE(data)
-        self.opaque: bool = ByteReader.ReadBoolean(data)
-        self.matrix: Matrix = Matrix.FromBytes(data)
-        self.frame: int = ByteReader.ReadUint16LE(data)
-        self.opacity: float = 1.0
-        if not self.opaque:
-            self.opacity = ByteReader.ReadUint8LE(data) / 255.0
+    @property
+    def opaque(self) -> bool:
+        return self.opacity == 1.0
+
+    @classmethod
+    def FromBytesIO(cls, data: io.BytesIO) -> None:
+        id: int = ByteReader.ReadUint16LE(data)
+        opaque: bool = ByteReader.ReadBoolean(data)
+        matrix: Matrix = Matrix.FromBytes(data)
+        frame: int = ByteReader.ReadUint16LE(data)
+        opacity: float = 1.0 if opaque else ByteReader.ReadUint8LE(data) / 255.0
+        return cls(id, matrix, frame, opacity)
 
     def WriteBytesIO(self, data: io.BytesIO) -> None:
         ByteWriter.WriteUint16LE(data, self.id)
@@ -189,41 +207,46 @@ class AnmBone:
         self.matrix.WriteBytesIO(data)
         ByteWriter.WriteUint16LE(data, self.frame)
         if not self.opaque:
-            ByteWriter.WriteUint8LE(data, int(self.opacity * 255))
+            ByteWriter.WriteUint8LE(data, int(self.opacity * 255.0))
 
 
+@dataclass
 class AnmFrame:
-    def __init__(self, data: io.BytesIO):
-        self.__ParseFile(data)
 
-    def __ParseFile(self, data: io.BytesIO) -> None:
-        self.id: int = ByteReader.ReadUint16LE(data)
-        self.offset_a: tuple[int, int] | None = None
-        if (ByteReader.ReadBoolean(data)):
-            self.offset_a = (
-                ByteReader.ReadF64(data),
-                ByteReader.ReadF64(data)
-            )
-        self.offset_b: tuple[int, int] | None = None
-        if (ByteReader.ReadBoolean(data)):
-            self.offset_b = (
-                ByteReader.ReadF64(data),
-                ByteReader.ReadF64(data)
-            )
-        self.rotation: float = ByteReader.ReadF64(data)
-        self.bone_count: int = ByteReader.ReadUint16LE(data)
-        self.bones: list[None | int | AnmBone] = []
-        for i in range(self.bone_count):
+    id: int
+    offset_a: tuple[int, int] | None
+    offset_b: tuple[int, int] | None
+    rotation: float
+    bones: list[None | int | AnmBone]
+
+    @classmethod
+    def FromBytesIO(cls, data: io.BytesIO) -> None:
+        id: int = ByteReader.ReadUint16LE(data)
+        offset_a: tuple[int, int] | None = (
+            (ByteReader.ReadF64(data), ByteReader.ReadF64(data))
+            if ByteReader.ReadBoolean(data)
+            else None
+        )
+        offset_b: tuple[int, int] | None = (
+            (ByteReader.ReadF64(data), ByteReader.ReadF64(data))
+            if ByteReader.ReadBoolean(data)
+            else None
+        )
+        rotation: float = ByteReader.ReadF64(data)
+        bone_count: int = ByteReader.ReadUint16LE(data)
+        bones: list[None | int | AnmBone] = []
+        for _ in range(bone_count):
             # Huffman Code
             if ByteReader.ReadBoolean(data):
                 if ByteReader.ReadBoolean(data):
                     # full copy
-                    self.bones.append(None)
+                    bones.append(None)
                 else:
                     # partial copy (update bone anim frame)
-                    self.bones.append(ByteReader.ReadUint16LE(data))
+                    bones.append(ByteReader.ReadUint16LE(data))
             else:
-                self.bones.append(AnmBone(data))
+                bones.append(AnmBone.FromBytesIO(data))
+        return cls(id, offset_a, offset_b, rotation, bones)
 
     def WriteBytesIO(self, data: io.BytesIO) -> None:
         ByteWriter.WriteUint16LE(data, self.id)
@@ -236,7 +259,7 @@ class AnmFrame:
             ByteWriter.WriteF64(data, self.offset_b[0])
             ByteWriter.WriteF64(data, self.offset_b[1])
         ByteWriter.WriteF64(data, self.rotation)
-        ByteWriter.WriteUint16LE(data, self.bone_count)
+        ByteWriter.WriteUint16LE(data, len(self.bones))
         for bone in self.bones:
             if bone is None:
                 ByteWriter.WriteBoolean(data, True)
@@ -250,30 +273,51 @@ class AnmFrame:
                 bone.WriteBytesIO(data)
 
 
+@dataclass
 class AnmAnimation:
-    def __init__(self, data: io.BytesIO):
-        self.__ParseFile(data)
+    name: UTF8String
+    loop_start: int
+    recovery_start: int
+    free_start: int
+    preview_frame: int
+    base_start: int
+    data_entries: list[int]
+    frames: Generator[AnmFrame, None, None]
 
-    def __ParseFile(self, data: io.BytesIO) -> None:
-        self.name: UTF8String = UTF8String.FromBytesIO(data)
-        self.frame_count: int = ByteReader.ReadUint32LE(data)
-        self.loop_start: int = ByteReader.ReadUint32LE(data)
-        self.recovery_start: int = ByteReader.ReadUint32LE(data)
-        self.free_start: int = ByteReader.ReadUint32LE(data)
-        self.preview_frame: int = ByteReader.ReadUint32LE(data)
-        self.base_start: int = ByteReader.ReadUint32LE(data)
-        self.data_size: int = ByteReader.ReadUint32LE(data)
-        self.data_entries: list[int] = []
-        for i in range(self.data_size):
-            self.data_entries.append(ByteReader.ReadUint32LE(data))
-        self.frame_byte_size: int = ByteReader.ReadUint32LE(data)
-        self.frames: list[AnmFrame] = []
-        for i in range(self.frame_count):
-            self.frames.append(AnmFrame(data))
+    @classmethod
+    def FromBytesIO(cls, data: io.BytesIO) -> None:
+        name: UTF8String = UTF8String.FromBytesIO(data)
+        frame_count: int = ByteReader.ReadUint32LE(data)
+        loop_start: int = ByteReader.ReadUint32LE(data)
+        recovery_start: int = ByteReader.ReadUint32LE(data)
+        free_start: int = ByteReader.ReadUint32LE(data)
+        preview_frame: int = ByteReader.ReadUint32LE(data)
+        base_start: int = ByteReader.ReadUint32LE(data)
+        data_size: int = ByteReader.ReadUint32LE(data)
+        data_entries: list[int] = [
+            ByteReader.ReadUint32LE(data) for _ in range(data_size)
+        ]
+        frame_byte_size: int = ByteReader.ReadUint32LE(data)
+        sub_buffer = io.BytesIO(data.read(frame_byte_size))
+        frames: Generator[AnmFrame, None, None] = (
+            AnmFrame.FromBytesIO(sub_buffer) for _ in range(frame_count)
+        )
+
+        return cls(
+            name,
+            loop_start,
+            recovery_start,
+            free_start,
+            preview_frame,
+            base_start,
+            data_entries,
+            frames,
+        )
 
     def WriteBytesIO(self, data: io.BytesIO) -> None:
         self.name.WriteBytesIO(data)
-        ByteWriter.WriteUint32LE(data, len(self.frames))
+        frames = list(self.frames)
+        ByteWriter.WriteUint32LE(data, len(frames))
         ByteWriter.WriteUint32LE(data, self.loop_start)
         ByteWriter.WriteUint32LE(data, self.recovery_start)
         ByteWriter.WriteUint32LE(data, self.free_start)
@@ -283,24 +327,28 @@ class AnmAnimation:
         for data_entry in self.data_entries:
             ByteWriter.WriteUint32LE(data, data_entry)
         frame_data = io.BytesIO()
-        for frame in self.frames:
+        for frame in frames:
             frame.WriteBytesIO(frame_data)
         # TODO calculate frame_byte_size
         ByteWriter.WriteUint32LE(data, frame_data.getbuffer().nbytes)
         ByteWriter.WriteBytes(data, frame_data.getbuffer())
 
 
+@dataclass
 class AnmClass:
-    def __init__(self, data: io.BytesIO):
-        self.__ParseFile(data)
+    index: UTF8String
+    filename: UTF8String
+    animations: list[AnmAnimation]
 
-    def __ParseFile(self, data: io.BytesIO) -> None:
-        self.index: UTF8String = UTF8String.FromBytesIO(data)
-        self.filename: UTF8String = UTF8String.FromBytesIO(data)
-        self.animationCount: int = ByteReader.ReadUint32LE(data)
-        self.animations: list[AnmAnimation] = []
-        for i in range(self.animationCount):
-            self.animations.append(AnmAnimation(data))
+    @classmethod
+    def FromBytesIO(cls, data: io.BytesIO) -> None:
+        index: UTF8String = UTF8String.FromBytesIO(data)
+        filename: UTF8String = UTF8String.FromBytesIO(data)
+        animationCount: int = ByteReader.ReadUint32LE(data)
+        animations: list[AnmAnimation] = [
+            AnmAnimation.FromBytesIO(data) for _ in range(animationCount)
+        ]
+        return cls(index, filename, animations)
 
     def WriteBytesIO(self, data: io.BytesIO) -> None:
         self.index.WriteBytesIO(data)
@@ -327,10 +375,9 @@ class AnmFile:
             return
 
     def __ParseFile(self, data: io.BytesIO) -> None:
-        # open("dump.bin", "wb").write(data.getbuffer())
-        while (ByteReader.ReadBoolean(data)):
+        while ByteReader.ReadBoolean(data):
             anmName: UTF8String = UTF8String.FromBytesIO(data)
-            anmClass: AnmClass = AnmClass(data)
+            anmClass: AnmClass = AnmClass.FromBytesIO(data)
             self.anm_classes[anmName.string] = anmClass
 
     def Save(self, filename: str) -> None:
